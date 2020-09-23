@@ -5,7 +5,8 @@ use crate::{
 use encoding::Encoding;
 use fmt::Debug;
 use futures::io::AsyncReadExt;
-use std::{convert::TryFrom, fmt};
+use std::net::ToSocketAddrs;
+use std::{borrow::Cow, convert::TryFrom, fmt};
 
 uint_enum! {
     #[repr(u8)]
@@ -84,6 +85,7 @@ pub enum TokenEnvChange {
     BeginTransaction(u64),
     CommitTransaction(u64),
     RollbackTransaction(u64),
+    // Routing { alternate_address: String, port: usize },
 }
 
 impl fmt::Display for TokenEnvChange {
@@ -163,6 +165,30 @@ impl TokenEnvChange {
                 src.read_u8().await?;
                 let desc = src.read_u64_le().await?;
                 TokenEnvChange::RollbackTransaction(desc)
+            }
+            EnvChangeTy::Routing => {
+                src.read_u8().await?; // u16le = length of the whole thing - probably!
+                src.read_u8().await?;
+                src.read_u8().await?; // always 0 - meants the protocol is TCP
+                let port = src.read_u16_le().await? as usize; // remove usize casting
+                let len = src.read_u16_le().await? as usize; // le port
+                let alternate_address = read_varchar(src, len).await?;
+                let alternate_server = format!("{}:{}", alternate_address, port);
+                let _ = alternate_server
+                    .to_socket_addrs()
+                    .map_err(|e| {
+                        Error::Protocol(Cow::from(format!("Parsing failed with error: {}", e)))
+                    })?
+                    .next()
+                    .ok_or(Error::Protocol(Cow::from(format!(
+                        "Unable to extract alternate_server"
+                    ))))?; // sanity check
+                src.read_u8().await?;
+                src.debug_buffer(); // probably old address + port OR token "Done"
+                return Err(Error::RouteToAlternateAddress {
+                    alternate_address,
+                    port,
+                });
             }
             ty => panic!("skipping env change type {:?}", ty),
         };

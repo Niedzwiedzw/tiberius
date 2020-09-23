@@ -45,6 +45,7 @@ where
         loop {
             match stream.try_next().await? {
                 Some(ReceivedToken::Done(token)) => return Ok(token),
+                // Some(ReceiverToken::EnvChange(TokenEnvChange::Routing { ..})) => return errror here TODO: that's where I handle error
                 Some(_) => (),
                 None => return Err(crate::Error::Protocol("Never got DONE token.".into())),
             }
@@ -140,7 +141,7 @@ where
             }
             TokenEnvChange::CommitTransaction(_) | TokenEnvChange::RollbackTransaction(_) => {
                 self.conn.context_mut().set_transaction_id(0);
-            }
+            } // TODO: add a fourth one with a log 
             _ => (),
         }
 
